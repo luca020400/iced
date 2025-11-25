@@ -326,7 +326,10 @@ fn update<Message: Clone, W>(
     }
 
     match event {
-        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+        Event::Mouse(mouse::Event::ButtonPressed {
+            button: mouse::Button::Left,
+            ..
+        })
         | Event::Touch(touch::Event::FingerPressed { .. }) => {
             if let Some(message) = widget.on_press.as_ref() {
                 shell.publish(message.clone());
@@ -356,7 +359,10 @@ fn update<Message: Clone, W>(
                 shell.publish(message.clone());
             }
         }
-        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
+        Event::Mouse(mouse::Event::ButtonPressed {
+            button: mouse::Button::Right,
+            ..
+        }) => {
             if let Some(message) = widget.on_right_press.as_ref() {
                 shell.publish(message.clone());
                 shell.capture_event();
@@ -367,7 +373,10 @@ fn update<Message: Clone, W>(
                 shell.publish(message.clone());
             }
         }
-        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)) => {
+        Event::Mouse(mouse::Event::ButtonPressed {
+            button: mouse::Button::Middle,
+            ..
+        }) => {
             if let Some(message) = widget.on_middle_press.as_ref() {
                 shell.publish(message.clone());
                 shell.capture_event();

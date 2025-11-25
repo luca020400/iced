@@ -612,8 +612,10 @@ where
             shell: &mut Shell<'_, Message>,
             viewport: &Rectangle,
         ) {
-            let is_mouse_press =
-                matches!(event, core::Event::Mouse(mouse::Event::ButtonPressed(_)));
+            let is_mouse_press = matches!(
+                event,
+                core::Event::Mouse(mouse::Event::ButtonPressed { .. })
+            );
 
             self.content
                 .update(tree, event, layout, cursor, renderer, shell, viewport);
