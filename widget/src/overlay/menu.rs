@@ -410,7 +410,10 @@ where
             .min(self.options.len().saturating_sub(1));
 
         match event {
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+            Event::Mouse(mouse::Event::ButtonPressed {
+                button: mouse::Button::Left,
+                ..
+            }) => {
                 if cursor.is_over(layout.bounds())
                     && let Some(option) = self.options.get(hovered_option)
                 {
