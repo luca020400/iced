@@ -1008,6 +1008,15 @@ pub struct Settings {
     pub spacing: Pixels,
     /// The styling of the Markdown.
     pub style: Style,
+    /// Whether the rendered Markdown should be selectable.
+    pub selectable: bool,
+    /// When `true`, the rendered Markdown is wrapped in a
+    /// [`selectable_group`], allowing the user to drag-select across
+    /// paragraphs, headings, list items, and code blocks. Has no
+    /// effect unless `selectable` is also `true`.
+    ///
+    /// [`selectable_group`]: crate::selectable_group
+    pub group_selection: bool,
 }
 
 impl Settings {
@@ -1035,6 +1044,8 @@ impl Settings {
             code_size: text_size * 0.75,
             spacing: text_size * 0.875,
             style: style.into(),
+            selectable: false,
+            group_selection: false,
         }
     }
 }
@@ -1181,7 +1192,13 @@ where
         .enumerate()
         .map(|(i, item_)| item(viewer, settings, item_, i));
 
-    Element::new(column(blocks).spacing(settings.spacing))
+    let column = column(blocks).spacing(settings.spacing);
+
+    if settings.selectable && settings.group_selection {
+        crate::selectable_group::selectable_group::<Uri, _, _, _>(column).into()
+    } else {
+        Element::new(column)
+    }
 }
 
 /// Displays an [`Item`] using the given [`Viewer`].
@@ -1246,6 +1263,7 @@ where
     container(
         rich_text(text.spans(settings.style))
             .on_link_click(on_link_click)
+            .selectable(settings.selectable)
             .size(match level {
                 pulldown_cmark::HeadingLevel::H1 => h1_size,
                 pulldown_cmark::HeadingLevel::H2 => h2_size,
@@ -1277,6 +1295,7 @@ where
     rich_text(text.spans(settings.style))
         .size(settings.text_size)
         .on_link_click(on_link_click)
+        .selectable(settings.selectable)
         .into()
 }
 
@@ -1305,13 +1324,13 @@ where
                     )
                 }
             },
-            view_with(
-                bullet.items(),
+            items(
+                viewer,
                 Settings {
                     spacing: settings.spacing * 0.6,
                     ..settings
                 },
-                viewer,
+                bullet.items(),
             )
         ]
         .spacing(settings.spacing)
@@ -1343,13 +1362,13 @@ where
                 .size(settings.text_size)
                 .align_x(alignment::Horizontal::Right)
                 .width(settings.text_size * ((digits as f32 / 2.0).ceil() + 1.0)),
-            view_with(
-                bullet.items(),
+            items(
+                viewer,
                 Settings {
                     spacing: settings.spacing * 0.6,
                     ..settings
                 },
-                viewer,
+                bullet.items(),
             )
         ]
         .spacing(settings.spacing)
@@ -1375,6 +1394,7 @@ where
             container(column(lines.iter().map(|line| {
                 rich_text(line.spans(settings.style))
                     .on_link_click(on_link_click.clone())
+                    .selectable(settings.selectable)
                     .font(settings.style.code_block_font)
                     .size(settings.code_size)
                     .into()
@@ -1519,10 +1539,14 @@ where
         let _url = url;
         let _title = title;
 
-        container(rich_text(alt.spans(settings.style)).on_link_click(Self::on_link_click))
-            .padding(settings.spacing.0)
-            .class(Theme::code_block())
-            .into()
+        container(
+            rich_text(alt.spans(settings.style))
+                .on_link_click(Self::on_link_click)
+                .selectable(settings.selectable),
+        )
+        .padding(settings.spacing.0)
+        .class(Theme::code_block())
+        .into()
     }
 
     /// Displays a heading.
