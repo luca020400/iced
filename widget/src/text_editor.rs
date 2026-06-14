@@ -750,19 +750,21 @@ where
                 Update::ButtonRelease => {
                     state.drag_click = None;
 
-                    if cfg!(target_os = "linux") && state.focus.is_some() {
-                        clipboard.write(
-                            clipboard::Kind::Primary,
-                            self.content.selection().unwrap_or_default(),
-                        );
+                    if cfg!(target_os = "linux")
+                        && state.focus.is_some()
+                        && let Some(selection) = self.content.selection()
+                        && !selection.is_empty()
+                    {
+                        shell.write_clipboard_primary(clipboard::Content::Text(selection));
                     }
                 }
                 Update::KeyRelease => {
-                    if cfg!(target_os = "linux") && state.focus.is_some() {
-                        clipboard.write(
-                            clipboard::Kind::Primary,
-                            self.content.selection().unwrap_or_default(),
-                        );
+                    if cfg!(target_os = "linux")
+                        && state.focus.is_some()
+                        && let Some(selection) = self.content.selection()
+                        && !selection.is_empty()
+                    {
+                        shell.write_clipboard_primary(clipboard::Content::Text(selection));
                     }
                 }
                 Update::Scroll(lines) => {
