@@ -186,7 +186,10 @@ where
             Event::Keyboard(keyboard::Event::ModifiersChanged(m)) => {
                 tree.state.downcast_mut::<GroupState>().modifiers = *m;
             }
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+            Event::Mouse(mouse::Event::ButtonPressed {
+                button: mouse::Button::Left,
+                ..
+            }) => {
                 let (extend, prior_anchor, last_click) = {
                     let group = tree.state.downcast_ref::<GroupState>();
                     (group.modifiers.shift(), group.anchor, group.last_click)

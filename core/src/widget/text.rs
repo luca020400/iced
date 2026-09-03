@@ -401,9 +401,10 @@ where
             .externally_managed;
 
         match event {
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
-                if !externally_managed =>
-            {
+            Event::Mouse(mouse::Event::ButtonPressed {
+                button: mouse::Button::Left,
+                ..
+            }) if !externally_managed => {
                 use crate::widget::operation::Selectable;
 
                 let state = tree.state.downcast_mut::<Internal<Renderer::Paragraph>>();
