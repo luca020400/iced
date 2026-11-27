@@ -39,6 +39,7 @@ pub use error::Error;
 pub use proxy::Proxy;
 
 use crate::core::backend;
+use crate::core::clipboard::ClipboardKind;
 use crate::core::mouse;
 use crate::core::renderer;
 use crate::core::shell;
@@ -154,6 +155,7 @@ where
         error: Option<Error>,
         system_theme: Option<oneshot::Sender<theme::Mode>>,
         drag: Option<DragSession>,
+        clipboard: Clipboard,
 
         #[cfg(target_arch = "wasm32")]
         canvas: Option<web_sys::HtmlCanvasElement>,
@@ -169,6 +171,7 @@ where
         error: None,
         system_theme: Some(system_theme_sender),
         drag: None,
+        clipboard: Clipboard::new(),
 
         #[cfg(target_arch = "wasm32")]
         canvas: None,
@@ -214,6 +217,8 @@ where
             );
 
             match event {
+                winit::event::WindowEvent::DataTransferReceived { serial, value, .. }
+                    if self.clipboard.receive(serial, value.as_ref()) => {}
                 event @ (winit::event::WindowEvent::DragEntered { .. }
                 | winit::event::WindowEvent::DragDropped { .. }
                 | winit::event::WindowEvent::DragLeft { .. }
@@ -411,6 +416,9 @@ where
                                     use winit::platform::macos::ActiveEventLoopExtMacOS;
                                     event_loop.set_allows_automatic_window_tabbing(_enabled);
                                 }
+                            }
+                            Control::Clipboard(request) => {
+                                self.clipboard.run(event_loop, request);
                             }
                         },
                         _ => {
@@ -613,6 +621,7 @@ enum Control {
         scale_factor: f32,
     },
     SetAutomaticWindowTabbing(bool),
+    Clipboard(runtime::clipboard::Action),
 }
 
 async fn run_instance<P>(
@@ -644,7 +653,6 @@ async fn run_instance<P>(
 
     let mut ui_caches = FxHashMap::default();
     let mut user_interfaces = ManuallyDrop::new(FxHashMap::default());
-    let mut clipboard = Clipboard::new();
 
     #[cfg(all(feature = "linux-theme-detection", target_os = "linux"))]
     let mut system_theme = {
@@ -866,7 +874,6 @@ async fn run_instance<P>(
                             &mut compositor,
                             &mut events,
                             &mut messages,
-                            &mut clipboard,
                             &mut control_sender,
                             &mut user_interfaces,
                             &mut window_manager,
@@ -997,7 +1004,6 @@ async fn run_instance<P>(
                                         &mut compositor,
                                         &mut events,
                                         &mut messages,
-                                        &mut clipboard,
                                         &mut control_sender,
                                         &mut user_interfaces,
                                         &mut window_manager,
@@ -1071,7 +1077,7 @@ async fn run_instance<P>(
                             window.request_input_method(input_method);
                             window.update_mouse(mouse_interaction);
 
-                            run_clipboard(&mut proxy, &mut clipboard, clipboard_requests, id);
+                            run_clipboard(&mut runtime, clipboard_requests, id);
                         }
 
                         runtime.broadcast(subscription::Event::Interaction {
@@ -1188,7 +1194,6 @@ async fn run_instance<P>(
                                 &mut compositor,
                                 &mut events,
                                 &mut messages,
-                                &mut clipboard,
                                 &mut control_sender,
                                 &mut user_interfaces,
                                 &mut window_manager,
@@ -1270,12 +1275,7 @@ async fn run_instance<P>(
                                     #[cfg(not(feature = "unconditional-rendering"))]
                                     window.request_redraw(_redraw_request);
 
-                                    run_clipboard(
-                                        &mut proxy,
-                                        &mut clipboard,
-                                        clipboard_requests,
-                                        id,
-                                    );
+                                    run_clipboard(&mut runtime, clipboard_requests, id);
                                 }
                                 user_interface::State::Outdated => {
                                     uis_stale = true;
@@ -1326,7 +1326,6 @@ async fn run_instance<P>(
                                     &mut compositor,
                                     &mut events,
                                     &mut messages,
-                                    &mut clipboard,
                                     &mut control_sender,
                                     &mut user_interfaces,
                                     &mut window_manager,
@@ -1445,7 +1444,6 @@ fn run_action<'a, P, C>(
     compositor: &mut Option<C>,
     events: &mut Vec<(window::Id, core::Event)>,
     messages: &mut shell::Bus<P::Message>,
-    clipboard: &mut Clipboard,
     control_sender: &mut mpsc::UnboundedSender<Control>,
     interfaces: &mut FxHashMap<window::Id, UserInterface<'a, P::Message, P::Theme, P::Renderer>>,
     window_manager: &mut window::Manager<P, C>,
@@ -1460,33 +1458,17 @@ fn run_action<'a, P, C>(
 {
     use crate::core::Renderer as _;
     use crate::runtime::backend;
-    use crate::runtime::clipboard;
     use crate::runtime::window;
 
     match action {
         Action::Output(message) => {
             let _ = messages.push(message);
         }
-        Action::Clipboard(action) => match action {
-            clipboard::Action::Read {
-                clipboard_kind,
-                kind,
-                channel,
-            } => {
-                clipboard.read(clipboard_kind, kind, move |result| {
-                    let _ = channel.send(result);
-                });
-            }
-            clipboard::Action::Write {
-                clipboard_kind,
-                content,
-                channel,
-            } => {
-                clipboard.write(clipboard_kind, content, move |result| {
-                    let _ = channel.send(result);
-                });
-            }
-        },
+        Action::Clipboard(action) => {
+            control_sender
+                .start_send(Control::Clipboard(action))
+                .expect("Send clipboard action");
+        }
         Action::Window(action) => match action {
             window::Action::Open(id, settings, channel) => {
                 let monitor = window_manager.last_monitor();
@@ -2082,31 +2064,42 @@ fn system_information(graphics: compositor::Information) -> system::Information 
     }
 }
 
-fn run_clipboard<Message: Send>(
-    proxy: &mut Proxy<Message>,
-    clipboard: &mut Clipboard,
+fn run_clipboard<Message: Send, E: Executor>(
+    runtime: &mut Runtime<E, Proxy<Message>, Action<Message>>,
     requests: core::Clipboard,
     window: window::Id,
 ) {
-    for (clipboard_kind, kind) in requests.reads {
-        let proxy = proxy.clone();
+    let reads = requests.reads.into_iter().map(move |(clipboard, kind)| {
+        let read = match clipboard {
+            ClipboardKind::Standard => runtime::clipboard::read(kind),
+            ClipboardKind::Primary => runtime::clipboard::read_primary(kind),
+        };
 
-        clipboard.read(clipboard_kind, kind, move |result| {
-            proxy.send_action(Action::Event {
+        read.then(move |result| {
+            runtime::task::effect(Action::Event {
                 window,
-                event: core::Event::Clipboard(core::clipboard::Event::Read(result.map(Arc::new))),
-            });
-        });
-    }
+                event: core::Event::Clipboard(core::clipboard::Event::Read(result)),
+            })
+        })
+    });
 
-    if let Some((clipboard_kind, content)) = requests.write {
-        let proxy = proxy.clone();
+    let write = requests.write.map(|(clipboard, content)| {
+        let write = match clipboard {
+            ClipboardKind::Standard => runtime::clipboard::write(content),
+            ClipboardKind::Primary => runtime::clipboard::write_primary(content),
+        };
 
-        clipboard.write(clipboard_kind, content, move |result| {
-            proxy.send_action(Action::Event {
+        write.then(move |result| {
+            runtime::task::effect(Action::Event {
                 window,
                 event: core::Event::Clipboard(core::clipboard::Event::Written(result)),
-            });
-        });
+            })
+        })
+    });
+
+    let task = runtime::task::Task::batch(reads.chain(write));
+
+    if let Some(stream) = runtime::task::into_stream(task) {
+        runtime.run(stream);
     }
 }
